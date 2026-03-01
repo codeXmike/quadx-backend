@@ -17,9 +17,9 @@ function userProjection(user) {
 }
 
 router.get("/", requireAuth, async (req, res) => {
-  const me = await User.findById(req.user._id).populate("friends", "username email");
+  const me = await User.findById(req.user._id).populate("friends", "username email rating avatarUrl");
   return res.status(200).json({
-    friends: (me.friends || []).map((f) => ({ id: f._id.toString(), username: f.username, email: f.email || null }))
+    friends: (me.friends || []).map((f) => userProjection(f))
   });
 });
 
