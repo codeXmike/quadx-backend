@@ -131,10 +131,10 @@ function registerGameHandlers(io, roomManager) {
   }
 
   function estimateBotDifficulty(rating) {
-    if (rating >= 1800) return { minDelay: 300, maxDelay: 900, blunderRate: 0.05 };
-    if (rating >= 1400) return { minDelay: 500, maxDelay: 1300, blunderRate: 0.12 };
-    if (rating >= 1000) return { minDelay: 700, maxDelay: 1700, blunderRate: 0.22 };
-    return { minDelay: 900, maxDelay: 2200, blunderRate: 0.35 };
+    if (rating >= 1800) return { minDelay: 900, maxDelay: 2400, blunderRate: 0.05, extraThinkChance: 0.18, extraThinkMax: 1600 };
+    if (rating >= 1400) return { minDelay: 1100, maxDelay: 2800, blunderRate: 0.12, extraThinkChance: 0.22, extraThinkMax: 1800 };
+    if (rating >= 1000) return { minDelay: 1300, maxDelay: 3200, blunderRate: 0.22, extraThinkChance: 0.28, extraThinkMax: 2100 };
+    return { minDelay: 1500, maxDelay: 3600, blunderRate: 0.35, extraThinkChance: 0.34, extraThinkMax: 2500 };
   }
 
   function legalColumns(board) {
@@ -499,7 +499,11 @@ function registerGameHandlers(io, roomManager) {
       const botProfile = botPool.find((b) => b.id === botId) || { rating: 1000, style: "balanced" };
       const diff = estimateBotDifficulty(botProfile.rating || 1000);
       if (!plannedAt) {
-        pendingBotTurns.set(pendingKey, now + randomInt(diff.minDelay, diff.maxDelay));
+        let delay = randomInt(diff.minDelay, diff.maxDelay);
+        if (Math.random() < diff.extraThinkChance) {
+          delay += randomInt(250, diff.extraThinkMax);
+        }
+        pendingBotTurns.set(pendingKey, now + delay);
         continue;
       }
 

@@ -10,6 +10,13 @@ const ESTABLISHED_K_MIN = 16;
 const ESTABLISHED_K_MAX = 40;
 const MAX_ESTABLISHED_DELTA = 45;
 
+function modeRatingMultiplier(maxPlayers) {
+  const mode = Number(maxPlayers || 2);
+  if (mode >= 4) return 1.35;
+  if (mode === 3) return 1.2;
+  return 1;
+}
+
 function expectedScore(playerRating, opponentRating) {
   return 1 / (1 + 10 ** ((opponentRating - playerRating) / 400));
 }
@@ -130,6 +137,7 @@ async function recordMatch(room, options = {}) {
   const now = new Date();
 
   const changes = [];
+  const ratingMultiplier = modeRatingMultiplier(room.maxPlayers);
   for (const p of participants) {
     if (!applyRating) break;
     const user = userById.get(String(p.userId));
@@ -152,15 +160,16 @@ async function recordMatch(room, options = {}) {
     const expected = expectedScore(before, opponentAvg);
     const k = adjustedKForMatchup(user, opponents, now);
 
-    let delta = Math.round(k * (score - expected));
+    let delta = Math.round(k * (score - expected) * ratingMultiplier);
 
     if (!user.provisional) {
-      delta = clamp(delta, -MAX_ESTABLISHED_DELTA, MAX_ESTABLISHED_DELTA);
+      const establishedCap = Math.round(MAX_ESTABLISHED_DELTA * ratingMultiplier);
+      delta = clamp(delta, -establishedCap, establishedCap);
       const reliabilityAvg = opponents.length
         ? opponents.map((op) => opponentReliability(op, now)).reduce((sum, value) => sum + value, 0) / opponents.length
         : 1;
-      if (reliabilityAvg < 0.35) delta = clamp(delta, -5, 5);
-      else if (reliabilityAvg < 0.55) delta = clamp(delta, -12, 12);
+      if (reliabilityAvg < 0.35) delta = clamp(delta, -Math.round(5 * ratingMultiplier), Math.round(5 * ratingMultiplier));
+      else if (reliabilityAvg < 0.55) delta = clamp(delta, -Math.round(12 * ratingMultiplier), Math.round(12 * ratingMultiplier));
     }
 
     // If repeated suspicious heavy losses vs much lower opposition, damp losses.
