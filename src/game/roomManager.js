@@ -10,7 +10,7 @@ function makePlayerId() {
   return crypto.randomBytes(4).toString("hex").toUpperCase();
 }
 
-function normalizeTimeControlSec(value, fallback = 60) {
+function normalizeTimeControlSec(value, fallback = 120) {
   if (value === null || value === "" || String(value).toLowerCase?.() === "unlimited") return null;
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
@@ -25,7 +25,7 @@ class RoomManager {
     this.socketToSpectatorRoom = new Map();
   }
 
-  createRoom({ hostSocketId, hostUserId, hostUsername, hostRating, maxPlayers, timeControlSec = 60 }) {
+  createRoom({ hostSocketId, hostUserId, hostUsername, hostRating, maxPlayers, timeControlSec = 120 }) {
     const parsedSize = Number(maxPlayers);
     if (Number.isNaN(parsedSize) || parsedSize < MIN_PLAYERS || parsedSize > MAX_PLAYERS) {
       throw new Error(`Room size must be between ${MIN_PLAYERS} and ${MAX_PLAYERS}`);
@@ -34,7 +34,7 @@ class RoomManager {
     let roomId = makeRoomId();
     while (this.rooms.has(roomId)) roomId = makeRoomId();
 
-    const normalizedTimeControl = normalizeTimeControlSec(timeControlSec, 60);
+    const normalizedTimeControl = normalizeTimeControlSec(timeControlSec, 120);
     const room = {
       id: roomId,
       maxPlayers: parsedSize,
@@ -431,3 +431,4 @@ class RoomManager {
 }
 
 module.exports = { RoomManager, normalizeTimeControlSec };
+

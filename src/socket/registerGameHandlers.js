@@ -18,7 +18,7 @@ function registerGameHandlers(io, roomManager) {
   const recentBotOpponents = new Map();
   const pendingBotTurns = new Map();
 
-  function parseTimeControl(value, fallback = 60) {
+  function parseTimeControl(value, fallback = 120) {
     if (value === null || value === "" || String(value).toLowerCase?.() === "unlimited") return null;
     const parsed = Number(value);
     if (!Number.isFinite(parsed)) return fallback;
@@ -569,7 +569,7 @@ function registerGameHandlers(io, roomManager) {
           hostUsername: username,
           hostRating: socket.data.user?.rating,
           maxPlayers: payload.maxPlayers,
-          timeControlSec: parseTimeControl(payload.timeControlSec, 60)
+          timeControlSec: parseTimeControl(payload.timeControlSec, 120)
         });
         socket.join(room.id);
         socket.emit("room:created", { roomId: room.id });
@@ -620,7 +620,7 @@ function registerGameHandlers(io, roomManager) {
           rating: Number(user.rating || 1000),
           provisional: Boolean(user.provisional),
           placementGamesPlayed: Number(user.placementGamesPlayed || 0),
-          timeControlSec: parseTimeControl(payload.timeControlSec, 60),
+          timeControlSec: parseTimeControl(payload.timeControlSec, 120),
           enqueueAt: nowMs()
         };
         queues[maxPlayers].push(entry);
@@ -791,4 +791,5 @@ function registerGameHandlers(io, roomManager) {
 }
 
 module.exports = { registerGameHandlers };
+
 
