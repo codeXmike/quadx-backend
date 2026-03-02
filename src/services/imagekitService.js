@@ -33,8 +33,9 @@ async function uploadImageBuffer({ buffer, fileName, folder, tags }) {
   if (!buffer || !Buffer.isBuffer(buffer)) throw new Error("Invalid image buffer");
   if (!fileName) throw new Error("File name is required");
 
+  const fileObject = await toFile(buffer, fileName);
   const response = await imagekit.files.upload({
-    file: toFile(buffer, fileName),
+    file: fileObject,
     fileName,
     folder: folder || env.imagekitUploadFolder || "/quadx",
     tags: Array.isArray(tags) ? tags : undefined,
