@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const { DEFAULT_COLS, DEFAULT_ROWS, MAX_PLAYERS, MIN_PLAYERS, PLAYER_STYLES } = require("./constants");
 const { createBoard, dropSeed, hasConnectFour, isBoardFull } = require("./board");
+const DISCONNECT_GRACE_MS = 20 * 1000;
 
 function makeRoomId() {
   return crypto.randomBytes(3).toString("hex").toUpperCase();
@@ -71,6 +72,8 @@ class RoomManager {
       connected: true,
       eliminated: false,
       eliminatedByTimeout: false,
+      disconnectedAt: null,
+      disconnectGraceUntil: null,
       remainingMs: room.clockEnabled ? room.timeControlSec * 1000 : null
     };
   }
@@ -162,6 +165,10 @@ class RoomManager {
     return Boolean(player && player.connected && !player.eliminated);
   }
 
+  alivePlayers(room) {
+    return room.players.filter((p) => !p.eliminated);
+  }
+
   currentPlayer(room) {
     if (!room.players.length) return null;
 
@@ -199,6 +206,7 @@ class RoomManager {
     if (!room.clockEnabled || room.status !== "in_progress") return null;
     const current = this.currentPlayer(room);
     if (!current) return 0;
+    if (!current.connected) return current.remainingMs || 0;
     const startedAt = room.turnStartedAt || now;
     return Math.max(0, (current.remainingMs || 0) - (now - startedAt));
   }
@@ -212,7 +220,7 @@ class RoomManager {
   }
 
   completeByLastPlayer(room, endedReason) {
-    const alive = this.activePlayers(room);
+    const alive = this.alivePlayers(room);
     if (alive.length > 1) return false;
 
     room.status = "completed";
@@ -301,6 +309,8 @@ class RoomManager {
   tick(now = Date.now()) {
     const impacted = [];
 
+    impacted.push(...this.resolveDisconnects(now));
+
     for (const room of this.rooms.values()) {
       if (room.status !== "in_progress" || !room.clockEnabled) continue;
 
@@ -347,34 +357,100 @@ class RoomManager {
 
     const player = room.players[playerIndex];
     const wasCurrentTurn = room.status === "in_progress" && this.currentPlayer(room)?.socketId === socketId;
-    if (room.status === "waiting") {
-      room.players.splice(playerIndex, 1);
-      if (!room.players.length) {
-        this.rooms.delete(roomId);
-        return null;
-      }
-      if (room.turnIndex >= room.players.length) room.turnIndex = 0;
-      return room;
-    }
 
     player.connected = false;
-    player.eliminated = true;
-
-    if (this.completeByLastPlayer(room, "forfeit")) {
-      return room;
-    }
-
-    if (wasCurrentTurn) {
-      this.nextTurn(room);
-      room.turnStartedAt = room.clockEnabled ? Date.now() : null;
-    }
+    player.disconnectedAt = Date.now();
+    player.disconnectGraceUntil = player.disconnectedAt + DISCONNECT_GRACE_MS;
+    if (wasCurrentTurn) room.turnStartedAt = room.clockEnabled ? Date.now() : null;
     return room;
   }
 
   leaveRoom({ roomId, socketId }) {
     const room = this.getRoom(roomId);
     if (!room) return null;
-    return this.handleDisconnect(socketId);
+    const playerIndex = room.players.findIndex((p) => p.socketId === socketId);
+    if (playerIndex < 0) return this.handleDisconnect(socketId);
+
+    const player = room.players[playerIndex];
+    this.socketToRoom.delete(socketId);
+    player.connected = false;
+    player.disconnectedAt = Date.now();
+    player.disconnectGraceUntil = Date.now();
+    player.eliminated = true;
+
+    if (room.status === "waiting") {
+      room.players.splice(playerIndex, 1);
+      if (!room.players.length) {
+        this.rooms.delete(room.id);
+        return null;
+      }
+      if (room.turnIndex >= room.players.length) room.turnIndex = 0;
+      return room;
+    }
+
+    if (!this.completeByLastPlayer(room, "forfeit")) {
+      this.nextTurn(room);
+      room.turnStartedAt = room.clockEnabled ? Date.now() : null;
+    }
+    return room;
+  }
+
+  reconnectUserSocket({ userId, socketId }) {
+    const uid = String(userId || "");
+    if (!uid) return [];
+
+    const recovered = [];
+    for (const room of this.rooms.values()) {
+      if (room.status !== "waiting" && room.status !== "in_progress") continue;
+      const player = room.players.find((p) => String(p.userId || "") === uid && !p.eliminated);
+      if (!player) continue;
+
+      const oldSocketId = player.socketId;
+      if (oldSocketId && oldSocketId !== socketId) this.socketToRoom.delete(oldSocketId);
+
+      player.socketId = socketId;
+      player.connected = true;
+      player.disconnectedAt = null;
+      player.disconnectGraceUntil = null;
+      this.socketToRoom.set(socketId, room.id);
+      recovered.push(room);
+    }
+
+    return recovered;
+  }
+
+  resolveDisconnects(now = Date.now()) {
+    const impacted = [];
+    for (const room of this.rooms.values()) {
+      for (let i = room.players.length - 1; i >= 0; i -= 1) {
+        const player = room.players[i];
+        if (player.connected || player.eliminated) continue;
+        if (!player.disconnectGraceUntil || player.disconnectGraceUntil > now) continue;
+
+        this.socketToRoom.delete(player.socketId);
+        if (room.status === "waiting") {
+          room.players.splice(i, 1);
+          if (!room.players.length) {
+            this.rooms.delete(room.id);
+            break;
+          }
+          if (room.turnIndex >= room.players.length) room.turnIndex = 0;
+          impacted.push({ room, player: player.username, reason: "disconnect_removed_waiting" });
+          continue;
+        }
+
+        if (room.status === "in_progress") {
+          const wasCurrent = this.currentPlayer(room)?.playerId === player.playerId;
+          player.eliminated = true;
+          impacted.push({ room, player: player.username, reason: "disconnect_forfeit" });
+          if (!this.completeByLastPlayer(room, "disconnect_forfeit") && wasCurrent) {
+            this.nextTurn(room);
+            room.turnStartedAt = room.clockEnabled ? now : null;
+          }
+        }
+      }
+    }
+    return impacted;
   }
 
   getRoom(roomId) {
@@ -406,6 +482,10 @@ class RoomManager {
           connected: p.connected,
           eliminated: p.eliminated,
           eliminatedByTimeout: p.eliminatedByTimeout,
+          disconnectedAt: p.disconnectedAt || null,
+          reconnectGraceRemainingMs: !p.connected && !p.eliminated && p.disconnectGraceUntil
+            ? Math.max(0, p.disconnectGraceUntil - now)
+            : 0,
           remainingMs
         };
       }),

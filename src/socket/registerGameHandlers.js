@@ -443,7 +443,9 @@ function registerGameHandlers(io, roomManager) {
     const impactedRoomIds = new Set();
     for (const item of impacted) {
       impactedRoomIds.add(item.room.id);
-      io.to(item.room.id).emit("turn:timeout", { roomId: item.room.id, player: item.player });
+      if (item.reason === "turn_timeout" || item.reason === "timeout_end") {
+        io.to(item.room.id).emit("turn:timeout", { roomId: item.room.id, player: item.player });
+      }
       emitRoom(item.room);
       await closeMatchIfNeeded(item.room);
     }
@@ -527,6 +529,15 @@ function registerGameHandlers(io, roomManager) {
   io.on("connection", (socket) => {
     console.info(`[socket] connected user=${socket.data.user?.username} id=${socket.id}`);
     setOnline(socket.data.user?.id, socket.id, true);
+    const recoveredRooms = roomManager.reconnectUserSocket({
+      userId: socket.data.user?.id,
+      socketId: socket.id
+    });
+    for (const room of recoveredRooms) {
+      socket.join(room.id);
+      socket.emit("room:reconnected", { roomId: room.id });
+      emitRoom(room);
+    }
 
     socket.on("rooms:live", () => {
       if (!enforceEventRate(socket, "rooms:live", 20, 5000)) return;
