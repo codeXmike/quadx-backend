@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const ImageKit = require("@imagekit/nodejs");
 const { env } = require("../config/env");
+const toFile = ImageKit.toFile;
 
 const imageKitConfigured = Boolean(
   env.imagekitPublicKey &&
@@ -33,7 +34,7 @@ async function uploadImageBuffer({ buffer, fileName, folder, tags }) {
   if (!fileName) throw new Error("File name is required");
 
   const response = await imagekit.files.upload({
-    file: buffer,
+    file: toFile(buffer, fileName),
     fileName,
     folder: folder || env.imagekitUploadFolder || "/quadx",
     tags: Array.isArray(tags) ? tags : undefined,
