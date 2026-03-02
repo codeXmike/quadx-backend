@@ -36,7 +36,7 @@ const env = {
   imagekitPublicKey: process.env.IMAGEKIT_PUBLIC_KEY || "",
   imagekitPrivateKey: process.env.IMAGEKIT_PRIVATE_KEY || "",
   imagekitUrlEndpoint: process.env.IMAGEKIT_URL_ENDPOINT || "",
-  imagekitUploadFolder: process.env.IMAGEKIT_UPLOAD_FOLDER || "/quadx/avatars",
+  imagekitUploadFolder: process.env.IMAGEKIT_UPLOAD_FOLDER || "/quadx",
   botTargetCount: Number(process.env.BOT_TARGET_COUNT || 50),
   botSeedingEnabled: process.env.BOT_SEEDING_ENABLED !== "false",
   botMatchMinWaitSec: Number(process.env.BOT_MATCH_MIN_WAIT_SEC || 10),

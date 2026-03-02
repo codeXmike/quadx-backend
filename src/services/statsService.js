@@ -129,6 +129,7 @@ function applyResultCounters(user, score) {
 async function recordMatch(room, options = {}) {
   const applyRating = options.applyRating !== false;
   if (!room || room.status !== "completed") return null;
+  if (room.endedReason === "aborted") return null;
   console.info(`[match] recording room=${room.id} endedReason=${room.endedReason}`);
 
   const participants = room.players.map((p) => ({

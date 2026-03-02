@@ -91,6 +91,10 @@ async function makeUniqueUsername(baseValue) {
 }
 
 function authResponse(user) {
+  const safeSettings = {
+    hideDropButtons: Boolean(user.settings?.hideDropButtons),
+    confirmMoves: Boolean(user.settings?.confirmMoves)
+  };
   return {
     token: signAuthToken(user),
     user: {
@@ -107,7 +111,7 @@ function authResponse(user) {
       placementTotal: 6,
       totalGames: user.totalGames || 0,
       lastRatingDelta: user.lastRatingDelta || 0,
-      settings: user.settings || { hideDropButtons: false },
+      settings: safeSettings,
       gamesPlayed: user.gamesPlayed || 0,
       wins: user.wins || 0,
       losses: user.losses || 0,
@@ -408,6 +412,10 @@ router.post("/mfa/disable", requireAuth, async (req, res) => {
 });
 
 router.get("/me", requireAuth, async (req, res) => {
+  const safeSettings = {
+    hideDropButtons: Boolean(req.user.settings?.hideDropButtons),
+    confirmMoves: Boolean(req.user.settings?.confirmMoves)
+  };
   return res.status(200).json({
     user: {
       id: req.user._id.toString(),
@@ -423,7 +431,7 @@ router.get("/me", requireAuth, async (req, res) => {
       placementTotal: 6,
       totalGames: req.user.totalGames || 0,
       lastRatingDelta: req.user.lastRatingDelta || 0,
-      settings: req.user.settings || { hideDropButtons: false },
+      settings: safeSettings,
       gamesPlayed: req.user.gamesPlayed || 0,
       wins: req.user.wins || 0,
       losses: req.user.losses || 0,

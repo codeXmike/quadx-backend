@@ -1,8 +1,11 @@
 const express = require("express");
+const bcrypt = require("bcryptjs");
 const { requireAuth } = require("../auth/middleware");
 const { signAuthToken } = require("../auth/token");
 const { env } = require("../config/env");
 const { imageKitConfigured, getImageKitAuthParams } = require("../services/imagekitService");
+const { FriendRequest } = require("../models/FriendRequest");
+const { User } = require("../models/User");
 
 const router = express.Router();
 
@@ -32,8 +35,12 @@ router.get("/avatar-upload/auth", requireAuth, async (_req, res) => {
 });
 
 router.get("/settings", requireAuth, async (req, res) => {
+  const safeSettings = {
+    hideDropButtons: Boolean(req.user.settings?.hideDropButtons),
+    confirmMoves: Boolean(req.user.settings?.confirmMoves)
+  };
   return res.status(200).json({
-    settings: req.user.settings || { hideDropButtons: false },
+    settings: safeSettings,
       user: {
         id: req.user._id.toString(),
         username: req.user.username,
@@ -47,7 +54,8 @@ router.get("/settings", requireAuth, async (req, res) => {
         placementGamesPlayed: req.user.placementGamesPlayed || 0,
         placementTotal: 6,
         totalGames: req.user.totalGames || 0,
-        lastRatingDelta: req.user.lastRatingDelta || 0
+        lastRatingDelta: req.user.lastRatingDelta || 0,
+        settings: safeSettings
       }
     });
 });
@@ -78,10 +86,15 @@ router.patch("/settings", requireAuth, async (req, res) => {
       typeof req.body.hideDropButtons === "boolean"
         ? req.body.hideDropButtons
         : Boolean(req.user.settings?.hideDropButtons);
+    const confirmMoves =
+      typeof req.body.confirmMoves === "boolean"
+        ? req.body.confirmMoves
+        : Boolean(req.user.settings?.confirmMoves);
 
     req.user.settings = {
       ...(req.user.settings || {}),
-      hideDropButtons
+      hideDropButtons,
+      confirmMoves
     };
     await req.user.save();
     return res.status(200).json({
@@ -110,6 +123,28 @@ router.patch("/settings", requireAuth, async (req, res) => {
     });
   } catch (error) {
     return res.status(400).json({ message: error.message || "Failed to update settings" });
+  }
+});
+
+router.delete("/account", requireAuth, async (req, res) => {
+  try {
+    if (req.user.passwordHash) {
+      const password = String(req.body?.password || "");
+      if (!password) return res.status(400).json({ message: "Password is required to delete this account" });
+      const valid = await bcrypt.compare(password, req.user.passwordHash);
+      if (!valid) return res.status(401).json({ message: "Invalid password" });
+    }
+
+    const userId = req.user._id;
+    await Promise.all([
+      FriendRequest.deleteMany({ $or: [{ fromUserId: userId }, { toUserId: userId }] }),
+      User.updateMany({ friends: userId }, { $pull: { friends: userId } }),
+      User.deleteOne({ _id: userId })
+    ]);
+
+    return res.status(200).json({ ok: true });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || "Failed to delete account" });
   }
 });
 

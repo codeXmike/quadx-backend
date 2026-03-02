@@ -10,7 +10,7 @@ function registerGameHandlers(io, roomManager) {
   const CLOCK_SYNC_INTERVAL_MS = 500;
   const MATCHMAKING_TICK_MS = 1000;
   const BOT_TURN_TICK_MS = 250;
-  const BOT_DIFFICULTY_BOOST = 1.6;
+  const BOT_DIFFICULTY_BOOST = 3.0;
   const EVENT_WINDOW_MS = 5000;
   const EVENT_LIMIT_DEFAULT = 40;
   const botIds = new Set();
@@ -234,6 +234,17 @@ function registerGameHandlers(io, roomManager) {
     io.to(room.id).emit("room:state", roomManager.serializeRoom(room));
   }
 
+  function clearSocketSpectating(socket) {
+    const spectatorRoom = roomManager.removeSpectator(socket.id);
+    if (!spectatorRoom) return;
+    socket.leave(spectatorRoom.id);
+    emitRoom(spectatorRoom);
+  }
+
+  function activePlayerRoomForSocketUser(socket) {
+    return roomManager.getLivePlayerRoomByUserId(socket.data.user?.id);
+  }
+
   async function closeMatchIfNeeded(room) {
     if (!room || room.status !== "completed" || room.matchRecorded) return;
     const applyRating = env.botMatchesAffectRating || !room.isBotMatch;
@@ -336,6 +347,7 @@ function registerGameHandlers(io, roomManager) {
 
       let room;
       try {
+        clearSocketSpectating(hostSocket);
         room = roomManager.createRoom({
           hostSocketId: host.socketId,
           hostUserId: host.userId,
@@ -350,6 +362,7 @@ function registerGameHandlers(io, roomManager) {
           const player = batch[i];
           const playerSocket = io.sockets.sockets.get(player.socketId);
           if (!playerSocket) continue;
+          clearSocketSpectating(playerSocket);
           room = roomManager.joinRoom({
             roomId: room.id,
             socketId: player.socketId,
@@ -374,6 +387,7 @@ function registerGameHandlers(io, roomManager) {
     const hostSocket = io.sockets.sockets.get(host.socketId);
     if (!hostSocket) return null;
 
+    clearSocketSpectating(hostSocket);
     let room = roomManager.createRoom({
       hostSocketId: host.socketId,
       hostUserId: host.userId,
@@ -388,6 +402,7 @@ function registerGameHandlers(io, roomManager) {
       const human = humans[i];
       const playerSocket = io.sockets.sockets.get(human.socketId);
       if (!playerSocket) continue;
+      clearSocketSpectating(playerSocket);
       room = roomManager.joinRoom({
         roomId: room.id,
         socketId: human.socketId,
@@ -565,6 +580,11 @@ function registerGameHandlers(io, roomManager) {
       if (!enforceEventRate(socket, "room:spectate", 12, 5000)) return;
       try {
         if (!payload.roomId || typeof payload.roomId !== "string") throw new Error("Invalid room id");
+        const activeRoom = activePlayerRoomForSocketUser(socket);
+        if (activeRoom && activeRoom.id !== String(payload.roomId || "").trim().toUpperCase()) {
+          throw new Error(`You are already in active room ${activeRoom.id}. Rejoin it first.`);
+        }
+        clearSocketSpectating(socket);
         const room = roomManager.addSpectator({
           roomId: payload.roomId,
           socketId: socket.id,
@@ -586,6 +606,14 @@ function registerGameHandlers(io, roomManager) {
         const username = socket.data.user?.username;
         const userId = socket.data.user?.id;
         if (!username || !userId) throw new Error("Unauthorized socket");
+        const activeRoom = activePlayerRoomForSocketUser(socket);
+        if (activeRoom) {
+          socket.join(activeRoom.id);
+          socket.emit("error:event", { message: `You are already in room ${activeRoom.id}. Rejoin that game until it ends.` });
+          socket.emit("room:state", roomManager.serializeRoom(activeRoom));
+          return;
+        }
+        clearSocketSpectating(socket);
         const room = roomManager.createRoom({
           hostSocketId: socket.id,
           hostUserId: userId,
@@ -610,6 +638,20 @@ function registerGameHandlers(io, roomManager) {
         const username = socket.data.user?.username;
         const userId = socket.data.user?.id;
         if (!username || !userId) throw new Error("Unauthorized socket");
+        const targetRoomId = String(payload.roomId || "").trim().toUpperCase();
+        const activeRoom = activePlayerRoomForSocketUser(socket);
+        if (activeRoom && activeRoom.id !== targetRoomId) {
+          socket.join(activeRoom.id);
+          socket.emit("error:event", { message: `You are already in room ${activeRoom.id}. Rejoin that game until it ends.` });
+          socket.emit("room:state", roomManager.serializeRoom(activeRoom));
+          return;
+        }
+        if (activeRoom && activeRoom.id === targetRoomId) {
+          socket.join(activeRoom.id);
+          socket.emit("room:state", roomManager.serializeRoom(activeRoom));
+          return;
+        }
+        clearSocketSpectating(socket);
         const room = roomManager.joinRoom({
           roomId: payload.roomId,
           socketId: socket.id,
@@ -631,11 +673,19 @@ function registerGameHandlers(io, roomManager) {
         const userId = socket.data.user?.id;
         const maxPlayers = Number(payload.maxPlayers);
         if (!username || !userId) throw new Error("Unauthorized socket");
+        const activeRoom = activePlayerRoomForSocketUser(socket);
+        if (activeRoom) {
+          socket.join(activeRoom.id);
+          socket.emit("error:event", { message: `You are already in room ${activeRoom.id}. Rejoin that game until it ends.` });
+          socket.emit("room:state", roomManager.serializeRoom(activeRoom));
+          return;
+        }
         if (![2, 3, 4].includes(maxPlayers)) throw new Error("Queue type must be 2, 3, or 4");
         const user = await User.findById(userId).select("rating provisional placementGamesPlayed isBot");
         if (!user) throw new Error("User not found");
         if (user.isBot) throw new Error("Bots cannot queue directly");
         removeFromQueues(socket.id);
+        clearSocketSpectating(socket);
         const entry = {
           socketId: socket.id,
           userId,
@@ -711,9 +761,26 @@ function registerGameHandlers(io, roomManager) {
     socket.on("room:rematch", (payload = {}) => {
       if (!enforceEventRate(socket, "room:rematch", 8, 10000)) return;
       try {
-        const room = roomManager.rematchRoom({ roomId: payload.roomId, socketId: socket.id });
-        io.to(room.id).emit("room:rematch", { roomId: room.id });
+        const room = roomManager.getRoom(payload.roomId);
+        if (!room) throw new Error("Room not found");
+        if (room.status !== "completed") throw new Error("Rematch available only after game end");
+        const me = room.players.find((p) => p.socketId === socket.id);
+        if (!me) throw new Error("Only players can request rematch");
+
+        const connectedPlayers = room.players.filter((p) => p.connected);
+        if (connectedPlayers.length < 2) throw new Error("Need at least 2 connected players for rematch");
+        const voterIds = new Set(Array.isArray(room.rematchVotes) ? room.rematchVotes : []);
+        voterIds.add(String(me.userId || me.playerId));
+        room.rematchVotes = Array.from(voterIds);
         emitRoom(room);
+
+        const eligiblePlayers = connectedPlayers.filter((p) => !botIds.has(String(p.userId || "")));
+        const requiredVotes = Math.max(1, eligiblePlayers.length);
+        if (room.rematchVotes.length >= requiredVotes) {
+          const reset = roomManager.rematchRoom({ roomId: payload.roomId });
+          io.to(reset.id).emit("room:rematch", { roomId: reset.id });
+          emitRoom(reset);
+        }
       } catch (error) {
         socket.emit("error:event", { message: error.message });
       }

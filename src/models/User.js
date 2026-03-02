@@ -17,7 +17,8 @@ const userSchema = new mongoose.Schema(
     failedLoginAttempts: { type: Number, default: 0 },
     lockUntil: { type: Date, default: null },
     settings: {
-      hideDropButtons: { type: Boolean, default: false }
+      hideDropButtons: { type: Boolean, default: false },
+      confirmMoves: { type: Boolean, default: false }
     },
     avatarUrl: { type: String, default: "" },
     countryCode: { type: String, default: "US", maxlength: 2 },

@@ -40,6 +40,10 @@ function countDirection(board, row, col, mark, dRow, dCol) {
 }
 
 function hasConnectFour(board, row, col, mark) {
+  return getConnectFourLine(board, row, col, mark).length >= CONNECT_TARGET;
+}
+
+function getConnectFourLine(board, row, col, mark) {
   const axes = [
     { dRow: 0, dCol: 1 },
     { dRow: 1, dCol: 0 },
@@ -47,15 +51,33 @@ function hasConnectFour(board, row, col, mark) {
     { dRow: 1, dCol: -1 }
   ];
 
-  return axes.some(({ dRow, dCol }) => {
-    const forward = countDirection(board, row, col, mark, dRow, dCol);
-    const backward = countDirection(board, row, col, mark, -dRow, -dCol);
-    return 1 + forward + backward >= CONNECT_TARGET;
-  });
+  for (const { dRow, dCol } of axes) {
+    const line = [[row, col]];
+
+    let r = row + dRow;
+    let c = col + dCol;
+    while (inBounds(board, r, c) && board[r][c] === mark) {
+      line.push([r, c]);
+      r += dRow;
+      c += dCol;
+    }
+
+    r = row - dRow;
+    c = col - dCol;
+    while (inBounds(board, r, c) && board[r][c] === mark) {
+      line.unshift([r, c]);
+      r -= dRow;
+      c -= dCol;
+    }
+
+    if (line.length >= CONNECT_TARGET) return line;
+  }
+
+  return [];
 }
 
 function isBoardFull(board) {
   return board[0].every((cell) => Boolean(cell));
 }
 
-module.exports = { createBoard, dropSeed, hasConnectFour, isBoardFull };
+module.exports = { createBoard, dropSeed, hasConnectFour, getConnectFourLine, isBoardFull };

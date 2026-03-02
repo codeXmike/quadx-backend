@@ -1,6 +1,6 @@
 const crypto = require("crypto");
 const { DEFAULT_COLS, DEFAULT_ROWS, MAX_PLAYERS, MIN_PLAYERS, PLAYER_STYLES } = require("./constants");
-const { createBoard, dropSeed, hasConnectFour, isBoardFull } = require("./board");
+const { createBoard, dropSeed, getConnectFourLine, isBoardFull } = require("./board");
 const DISCONNECT_GRACE_MS = 20 * 1000;
 
 function makeRoomId() {
@@ -46,11 +46,13 @@ class RoomManager {
       spectators: new Map(),
       winner: null,
       endedReason: null,
+      winningCells: [],
       matchRecorded: false,
       timeControlSec: normalizedTimeControl,
       clockEnabled: normalizedTimeControl != null,
       turnStartedAt: null,
       turnSerial: 0,
+      rematchVotes: [],
       moves: [],
       createdAt: Date.now()
     };
@@ -137,11 +139,10 @@ class RoomManager {
     return room;
   }
 
-  rematchRoom({ roomId, socketId }) {
+  rematchRoom({ roomId }) {
     const room = this.getRoom(roomId);
     if (!room) throw new Error("Room not found");
     if (room.status !== "completed") throw new Error("Rematch available only after game end");
-    if (room.players[0]?.socketId !== socketId) throw new Error("Only host can request rematch");
 
     room.players = room.players.filter((p) => p.connected);
     if (room.players.length < 2) throw new Error("Need at least 2 connected players for rematch");
@@ -151,8 +152,10 @@ class RoomManager {
     room.status = "in_progress";
     room.winner = null;
     room.endedReason = null;
+    room.winningCells = [];
     room.matchRecorded = false;
     room.moves = [];
+    room.rematchVotes = [];
     room.players = room.players.map((p) => ({
       ...p,
       eliminated: false,
@@ -234,6 +237,7 @@ class RoomManager {
       ? { userId: alive[0].userId, username: alive[0].username, mark: alive[0].mark, color: alive[0].color }
       : null;
     room.endedReason = endedReason;
+    room.winningCells = [];
     room.turnStartedAt = null;
     return true;
   }
@@ -290,7 +294,8 @@ class RoomManager {
     };
     room.moves.push(move);
 
-    if (hasConnectFour(room.board, row, col, player.mark)) {
+    const winningLine = getConnectFourLine(room.board, row, col, player.mark);
+    if (winningLine.length) {
       room.status = "completed";
       room.winner = {
         userId: player.userId,
@@ -299,6 +304,7 @@ class RoomManager {
         color: player.color
       };
       room.endedReason = "connect_four";
+      room.winningCells = winningLine;
       room.turnStartedAt = null;
       return { room, move, gameOver: true, timedOut: false };
     }
@@ -306,6 +312,7 @@ class RoomManager {
     if (isBoardFull(room.board)) {
       room.status = "completed";
       room.endedReason = "draw";
+      room.winningCells = [];
       room.turnStartedAt = null;
       return { room, move, gameOver: true, timedOut: false };
     }
@@ -348,6 +355,17 @@ class RoomManager {
         spectators: room.spectators.size,
         timeControlSec: room.timeControlSec
       }));
+  }
+
+  getLivePlayerRoomByUserId(userId) {
+    const uid = String(userId || "");
+    if (!uid) return null;
+    for (const room of this.rooms.values()) {
+      if (room.status !== "waiting" && room.status !== "in_progress") continue;
+      const player = room.players.find((p) => String(p.userId || "") === uid && !p.eliminated);
+      if (player) return room;
+    }
+    return null;
   }
 
   handleDisconnect(socketId) {
@@ -395,6 +413,16 @@ class RoomManager {
         return null;
       }
       if (room.turnIndex >= room.players.length) room.turnIndex = 0;
+      return room;
+    }
+
+    if (room.status === "in_progress" && room.moves.length === 0) {
+      room.status = "completed";
+      room.winner = null;
+      room.endedReason = "aborted";
+      room.winningCells = [];
+      room.turnStartedAt = null;
+      room.rematchVotes = [];
       return room;
     }
 
@@ -512,11 +540,13 @@ class RoomManager {
         : null,
       winner: room.winner,
       endedReason: room.endedReason,
+      winningCells: room.winningCells || [],
       moveCount: room.moves.length,
       spectatorCount: room.spectators.size,
       timeControlSec: room.timeControlSec,
       clockEnabled: room.clockEnabled,
       turnSerial: Number(room.turnSerial || 0),
+      rematchVotes: Array.isArray(room.rematchVotes) ? room.rematchVotes : [],
       turnExpiresAt: room.clockEnabled && room.status === "in_progress"
         ? (current?.connected ? now + this.getCurrentPlayerRemainingMs(room, now) : null)
         : null
