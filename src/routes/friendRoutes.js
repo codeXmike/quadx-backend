@@ -7,9 +7,10 @@ const { FriendRequest } = require("../models/FriendRequest");
 const router = express.Router();
 
 function userProjection(user) {
+  if (!user || !user._id) return null;
   return {
     id: user._id.toString(),
-    username: user.username,
+    username: user.username || "Unknown",
     email: user.email || null,
     rating: user.rating || 1000,
     avatarUrl: user.avatarUrl || ""
@@ -18,8 +19,12 @@ function userProjection(user) {
 
 router.get("/", requireAuth, async (req, res) => {
   const me = await User.findById(req.user._id).populate("friends", "username email rating avatarUrl");
+  const mappedFriends = (me?.friends || [])
+    .map((f) => userProjection(f))
+    .filter(Boolean);
+
   return res.status(200).json({
-    friends: (me.friends || []).map((f) => userProjection(f))
+    friends: mappedFriends
   });
 });
 
@@ -34,16 +39,28 @@ router.get("/requests", requireAuth, async (req, res) => {
   ]);
 
   return res.status(200).json({
-    incoming: incoming.map((r) => ({
-      id: r._id.toString(),
-      from: userProjection(r.fromUserId),
-      createdAt: r.createdAt
-    })),
-    outgoing: outgoing.map((r) => ({
-      id: r._id.toString(),
-      to: userProjection(r.toUserId),
-      createdAt: r.createdAt
-    }))
+    incoming: incoming
+      .map((r) => {
+        const from = userProjection(r.fromUserId);
+        if (!from) return null;
+        return {
+          id: r._id.toString(),
+          from,
+          createdAt: r.createdAt
+        };
+      })
+      .filter(Boolean),
+    outgoing: outgoing
+      .map((r) => {
+        const to = userProjection(r.toUserId);
+        if (!to) return null;
+        return {
+          id: r._id.toString(),
+          to,
+          createdAt: r.createdAt
+        };
+      })
+      .filter(Boolean)
   });
 });
 

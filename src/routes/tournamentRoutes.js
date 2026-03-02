@@ -3,6 +3,7 @@ const { requireAuth } = require("../auth/middleware");
 const { Tournament } = require("../models/Tournament");
 
 const router = express.Router();
+const APEX_MIN_RATING = 1900;
 
 function swissPair(participants) {
   const sorted = [...participants].sort((a, b) => b.score - a.score || b.buchholz - a.buchholz || a.username.localeCompare(b.username));
@@ -81,6 +82,9 @@ router.post("/", requireAuth, async (req, res) => {
   const name = String(req.body.name || "").trim();
   const maxPlayers = Math.min(64, Math.max(4, Number(req.body.maxPlayers || 16)));
   if (!name) return res.status(400).json({ message: "Tournament name is required" });
+  if (Number(req.user?.rating || 0) < APEX_MIN_RATING) {
+    return res.status(403).json({ message: "Only Apex and above can create tournaments (1900+ rating required)." });
+  }
 
   const tournament = await Tournament.create({
     name,
