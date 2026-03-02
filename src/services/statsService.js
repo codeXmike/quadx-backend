@@ -17,6 +17,14 @@ function modeRatingMultiplier(maxPlayers) {
   return 1;
 }
 
+function multiplayerWinnerFloor(maxPlayers, score) {
+  if (score !== 1) return null;
+  const mode = Number(maxPlayers || 2);
+  if (mode >= 4) return 28;
+  if (mode === 3) return 20;
+  return null;
+}
+
 function expectedScore(playerRating, opponentRating) {
   return 1 / (1 + 10 ** ((opponentRating - playerRating) / 400));
 }
@@ -175,6 +183,11 @@ async function recordMatch(room, options = {}) {
     // If repeated suspicious heavy losses vs much lower opposition, damp losses.
     if (!user.provisional && Number(user.sandbaggingFlags || 0) >= 3 && delta < 0) {
       delta = Math.max(delta, -8);
+    }
+
+    const winnerFloor = multiplayerWinnerFloor(room.maxPlayers, score);
+    if (winnerFloor != null && delta < winnerFloor) {
+      delta = winnerFloor;
     }
 
     const after = clampRating(before + delta);

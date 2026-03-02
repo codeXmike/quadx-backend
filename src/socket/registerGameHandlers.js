@@ -10,6 +10,7 @@ function registerGameHandlers(io, roomManager) {
   const CLOCK_SYNC_INTERVAL_MS = 500;
   const MATCHMAKING_TICK_MS = 1000;
   const BOT_TURN_TICK_MS = 250;
+  const BOT_DIFFICULTY_BOOST = 1.6;
   const EVENT_WINDOW_MS = 5000;
   const EVENT_LIMIT_DEFAULT = 40;
   const botIds = new Set();
@@ -137,6 +138,17 @@ function registerGameHandlers(io, roomManager) {
     return { minDelay: 1500, maxDelay: 3600, blunderRate: 0.35, extraThinkChance: 0.34, extraThinkMax: 2500 };
   }
 
+  function boostBotDifficulty(diff) {
+    const factor = Math.max(1, Number(BOT_DIFFICULTY_BOOST) || 1);
+    return {
+      minDelay: Math.max(250, Math.round(diff.minDelay / factor)),
+      maxDelay: Math.max(500, Math.round(diff.maxDelay / factor)),
+      blunderRate: Math.max(0.01, Math.min(1, diff.blunderRate / factor)),
+      extraThinkChance: Math.max(0.02, Math.min(1, diff.extraThinkChance / factor)),
+      extraThinkMax: Math.max(300, Math.round(diff.extraThinkMax / factor))
+    };
+  }
+
   function legalColumns(board) {
     if (!Array.isArray(board) || !board.length || !Array.isArray(board[0])) return [];
     const cols = board[0].length;
@@ -155,7 +167,7 @@ function registerGameHandlers(io, roomManager) {
     const cols = legalColumns(room.board);
     if (!cols.length) return null;
 
-    const difficulty = estimateBotDifficulty(botProfile.rating || 1000);
+    const difficulty = boostBotDifficulty(estimateBotDifficulty(botProfile.rating || 1000));
     const board = room.board;
 
     for (const col of cols) {
@@ -499,7 +511,7 @@ function registerGameHandlers(io, roomManager) {
       if (plannedAt && plannedAt > now) continue;
 
       const botProfile = botPool.find((b) => b.id === botId) || { rating: 1000, style: "balanced" };
-      const diff = estimateBotDifficulty(botProfile.rating || 1000);
+      const diff = boostBotDifficulty(estimateBotDifficulty(botProfile.rating || 1000));
       if (!plannedAt) {
         let delay = randomInt(diff.minDelay, diff.maxDelay);
         if (Math.random() < diff.extraThinkChance) {
@@ -757,7 +769,12 @@ function registerGameHandlers(io, roomManager) {
       if (!enforceEventRate(socket, "move:drop", 35, 5000)) return;
       try {
         if (!Number.isInteger(Number(payload.column))) throw new Error("Invalid move payload");
-        const { room, move, timedOut, timeout } = roomManager.dropMove({ roomId: payload.roomId, socketId: socket.id, column: payload.column });
+        const { room, move, timedOut, timeout } = roomManager.dropMove({
+          roomId: payload.roomId,
+          socketId: socket.id,
+          column: payload.column,
+          turnSerial: payload.turnSerial
+        });
         if (timedOut) {
           if (timeout) io.to(room.id).emit("turn:timeout", { roomId: room.id, player: timeout.player });
           emitRoom(room);

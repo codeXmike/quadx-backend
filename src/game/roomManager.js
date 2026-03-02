@@ -50,6 +50,7 @@ class RoomManager {
       timeControlSec: normalizedTimeControl,
       clockEnabled: normalizedTimeControl != null,
       turnStartedAt: null,
+      turnSerial: 0,
       moves: [],
       createdAt: Date.now()
     };
@@ -122,6 +123,7 @@ class RoomManager {
     room.status = "in_progress";
     room.turnIndex = 0;
     room.turnStartedAt = room.clockEnabled ? now : null;
+    room.turnSerial = 1;
     this.currentPlayer(room);
   }
 
@@ -158,6 +160,7 @@ class RoomManager {
       remainingMs: room.clockEnabled ? room.timeControlSec * 1000 : null
     }));
     room.turnStartedAt = room.clockEnabled ? Date.now() : null;
+    room.turnSerial = 1;
     return room;
   }
 
@@ -171,6 +174,8 @@ class RoomManager {
 
   currentPlayer(room) {
     if (!room.players.length) return null;
+    const current = room.players[room.turnIndex];
+    if (current && !current.eliminated) return current;
 
     for (let step = 0; step < room.players.length; step += 1) {
       const idx = (room.turnIndex + step) % room.players.length;
@@ -192,6 +197,7 @@ class RoomManager {
       const p = room.players[idx];
       if (this.isPlayerActive(p)) {
         room.turnIndex = idx;
+        room.turnSerial = Number(room.turnSerial || 0) + 1;
         return p;
       }
     }
@@ -253,11 +259,14 @@ class RoomManager {
     };
   }
 
-  dropMove({ roomId, socketId, column }) {
+  dropMove({ roomId, socketId, column, turnSerial }) {
     const room = this.getRoom(roomId);
     if (!room) throw new Error("Room not found");
     if (room.status !== "in_progress") throw new Error("Game is not active");
     if (room.winner) throw new Error("Game already ended");
+    if (Number.isInteger(Number(turnSerial)) && Number(turnSerial) !== Number(room.turnSerial || 0)) {
+      throw new Error("Turn changed. Waiting for sync.");
+    }
 
     const now = Date.now();
     if (room.clockEnabled && this.getCurrentPlayerRemainingMs(room, now) <= 0) {
@@ -372,6 +381,7 @@ class RoomManager {
     if (playerIndex < 0) return this.handleDisconnect(socketId);
 
     const player = room.players[playerIndex];
+    const wasCurrentTurn = room.status === "in_progress" && this.currentPlayer(room)?.socketId === socketId;
     this.socketToRoom.delete(socketId);
     player.connected = false;
     player.disconnectedAt = Date.now();
@@ -388,7 +398,7 @@ class RoomManager {
       return room;
     }
 
-    if (!this.completeByLastPlayer(room, "forfeit")) {
+    if (!this.completeByLastPlayer(room, "forfeit") && wasCurrentTurn) {
       this.nextTurn(room);
       room.turnStartedAt = room.clockEnabled ? Date.now() : null;
     }
@@ -467,7 +477,10 @@ class RoomManager {
       status: room.status,
       board: room.board,
       players: room.players.map((p) => {
-        const activeAndRunning = room.clockEnabled && room.status === "in_progress" && current?.socketId === p.socketId;
+        const activeAndRunning = room.clockEnabled
+          && room.status === "in_progress"
+          && current?.connected
+          && current?.socketId === p.socketId;
         const remainingMs = activeAndRunning
           ? Math.max(0, (p.remainingMs || 0) - (now - (room.turnStartedAt || now)))
           : p.remainingMs;
@@ -503,8 +516,9 @@ class RoomManager {
       spectatorCount: room.spectators.size,
       timeControlSec: room.timeControlSec,
       clockEnabled: room.clockEnabled,
+      turnSerial: Number(room.turnSerial || 0),
       turnExpiresAt: room.clockEnabled && room.status === "in_progress"
-        ? now + this.getCurrentPlayerRemainingMs(room, now)
+        ? (current?.connected ? now + this.getCurrentPlayerRemainingMs(room, now) : null)
         : null
     };
   }
